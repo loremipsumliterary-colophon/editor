@@ -6,7 +6,7 @@
 <title>LIAE · Valutatore</title>
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
   :root{
     --ink:#16181D; --paper:#EFEDE6; --line:#D7D2C4; --muted:#6A6A60; --sea:#14534B; --amber:#C9962B;
   }
@@ -324,7 +324,7 @@ function Panel({title,text,mono,copied,onCopy}){
       </div>
       <div style={mono
         ? {padding:"16px 18px",whiteSpace:"pre-wrap",fontFamily:"JetBrains Mono,monospace",fontSize:12.5,lineHeight:1.62,color:"#33363d",background:"#fbfaf6"}
-        : {padding:"18px 20px",whiteSpace:"pre-wrap",fontFamily:"Fraunces,Georgia,serif",fontSize:16,lineHeight:1.62,color:"var(--ink)"}}
+        : {padding:"18px 20px",whiteSpace:"pre-wrap",fontFamily:"'Playfair Display',Georgia,serif",fontSize:15,lineHeight:1.62,color:"var(--ink)"}}
         dangerouslySetInnerHTML={{__html:renderInline(text||"")}}/>
     </div>
   );
