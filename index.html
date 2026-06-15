@@ -145,6 +145,7 @@ const FALLBACK_SCHEMAS = [
   {key:"Gratuito",label:"Gratuito — rifiuto breve",hint:"Carica il manoscritto."},
   {key:"Gratuito_Plus",label:"Gratuito Plus — valutazione media",hint:"Carica il manoscritto."},
   {key:"ITALIC",label:"ITALIC — presentazione + estratto",hint:"Carica presentazione/estratto (+ .eml)."},
+  {key:"Italic_completa",label:"Italic completa — manoscritto dopo estratto",hint:"Manoscritto completo + feedback sull'estratto nelle comunicazioni precedenti."},
   {key:"Regular",label:"Regular — manoscritto completo",hint:"Carica il manoscritto completo."},
   {key:"Regular_espansa",label:"Regular espansa — sezionata",hint:"Manoscritto completo, formato esteso."},
   {key:"TYPO",label:"TYPO — revisione",hint:"Nuova versione + note precedenti nelle comunicazioni."},
@@ -163,6 +164,7 @@ function App(){
   const [ms,setMs]=useState(null);     // {name,text}
   const [eml,setEml]=useState(null);   // {name,text}
   const [comms,setComms]=useState([]); // [{name,text}]
+  const [extra,setExtra]=useState(""); // campo libero
   const [busy,setBusy]=useState(false);
   const [phase,setPhase]=useState("");
   const [err,setErr]=useState("");
@@ -186,7 +188,7 @@ function App(){
     const acc=[]; for(const f of files){ try{ acc.push({name:f.name,text:await extractAny(f)}); }catch(ex){ acc.push({name:f.name,text:"[estrazione non riuscita]"}); } }
     setComms(c=>[...c,...acc]);};
 
-  const reset=()=>{ setMs(null);setEml(null);setComms([]);setResult(null);setErr("");setPhase("");
+  const reset=()=>{ setMs(null);setEml(null);setComms([]);setExtra("");setResult(null);setErr("");setPhase("");
     [msRef,emlRef,commRef].forEach(r=>{if(r.current)r.current.value="";}); };
 
   const assembleMaterials=()=>{
@@ -203,6 +205,7 @@ function App(){
       if(block.length>MAX_COMMS) block=block.slice(0,MAX_COMMS)+"\n[...comunicazioni troncate...]";
       parts.push("COMUNICAZIONI PRECEDENTI:\n"+block);
     }
+    if(extra.trim()) parts.push("INFORMAZIONI AGGIUNTIVE (note dell'operatore):\n"+extra.trim());
     return parts.join("\n\n");
   };
 
@@ -215,7 +218,7 @@ function App(){
   };
 
   const generate=async()=>{
-    if(!ms && !eml && !comms.length){ setErr("Carica almeno un materiale (manoscritto/estratto, .eml o comunicazioni)."); return; }
+    if(!ms && !eml && !comms.length && !extra.trim()){ setErr("Carica almeno un materiale (manoscritto/estratto, .eml, comunicazioni) o scrivi qualcosa nel campo informazioni aggiuntive."); return; }
     setBusy(true); setErr(""); setResult(null); setPhase("Preparazione materiali");
     try{
       const materials=assembleMaterials();
@@ -264,6 +267,11 @@ function App(){
           eyebrow="Comunicazioni precedenti" filled={comms.length>0} filename={comms.length?comms.length+" file":null} hint="opzionale, multipli"/>
       </div>
       {comms.length>0 && <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:14}}>{comms.map(c=>c.name).join(" · ")}</div>}
+
+      <label style={lab}>Informazioni aggiuntive <span style={{textTransform:"none",letterSpacing:0,color:"var(--muted)"}}>(facoltative — contesto, istruzioni, testo incollato)</span></label>
+      <textarea value={extra} onChange={e=>setExtra(e.target.value)} rows={4}
+        placeholder="Scrivi o incolla qui qualsiasi informazione utile alla valutazione: contesto sull'autore, indicazioni specifiche, testo aggiuntivo…"
+        style={{width:"100%",fontFamily:"Inter,sans-serif",fontSize:14,lineHeight:1.5,padding:"11px 12px",border:"1.5px solid var(--line)",borderRadius:3,background:"#fff",color:"var(--ink)",resize:"vertical",marginBottom:18}}/>
 
       {err && <div style={errBox}>{err}</div>}
 
