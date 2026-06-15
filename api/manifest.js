@@ -1,5 +1,5 @@
 // GET /api/manifest -> elenco schemi selezionabili (etichette + hint).
-const { MANIFEST } = require("./_schemas");
+const { MANIFEST } = require("../lib/schemas");
 
 module.exports = (req, res) => {
   res.setHeader("Cache-Control", "no-store");

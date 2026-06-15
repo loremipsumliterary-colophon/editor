@@ -44,5 +44,5 @@ Le variabili locali: crea un file `.env.local` con `ANTHROPIC_API_KEY=...` e `AP
 - **Timeout**: `vercel.json` alza il limite della funzione a 60s. Le valutazioni piu lunghe (Regular espansa su manoscritti interi) sono le piu pesanti; se sul piano Hobby incontri timeout, valuta testi piu corti o l'upgrade.
 - **Estrazione testo**: avviene nel browser (PDF via pdf.js, DOCX via mammoth, ODT/RTF/DOC best-effort). I PDF scansionati senza testo non sono leggibili: convertili o incolla il testo.
 - **Tipografia**: l'output viene normalizzato lato client (trattino medio, apostrofi e virgolette dritti) come ulteriore garanzia oltre alle istruzioni dello schema.
-- **Aggiungere uno schema**: crea `api/schemas/<Chiave>.js` con `module.exports = "<testo dello schema>";`, poi aggiungilo in `api/_schemas.js` (mappa `MAP` + array `MANIFEST`). Comparira automaticamente nel menu a tendina.
+- **Aggiungere uno schema**: crea `lib/schemas/<Chiave>.js` con `module.exports = "<testo dello schema>";`, poi aggiungilo in `lib/schemas.js` (mappa `MAP` + array `MANIFEST`). Comparira automaticamente nel menu a tendina. NB: gli schemi stanno in `lib/` e NON in `api/`, perche Vercel conta ogni file in `api/` come Serverless Function (limite 12 sul piano Hobby).
 - **Sicurezza**: senza `APP_TOKEN` l'app e aperta a chiunque abbia l'URL (e consumerebbe la tua chiave). Impostala.

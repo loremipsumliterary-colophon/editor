@@ -3,8 +3,8 @@
 // header: x-app-token (deve combaciare con APP_TOKEN se impostata)
 // env: ANTHROPIC_API_KEY (obbligatoria), APP_TOKEN (consigliata), MODEL (opzionale)
 
-const { getSchema } = require("./_schemas");
-const CONTEXT = require("./_context"); // knowledge base (stringa)
+const { getSchema } = require("../lib/schemas");
+const CONTEXT = require("../lib/context"); // knowledge base (stringa)
 
 function buildSystem(key, schemaText) {
   return [
