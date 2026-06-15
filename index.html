@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LIAE · Valutatore</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,900&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
+  :root{
+    --ink:#16181D; --paper:#EFEDE6; --line:#D7D2C4; --muted:#6A6A60; --sea:#14534B; --amber:#C9962B;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;background:var(--paper);color:var(--ink);font-family:Inter,system-ui,sans-serif;}
+  ::selection{background:var(--amber);color:var(--ink);}
+  a{color:var(--sea);}
+  @keyframes stampIn{0%{opacity:0;transform:rotate(-2deg) scale(1.25);}100%{opacity:1;transform:rotate(-2deg) scale(1);}}
+  #root{max-width:900px;margin:0 auto;padding:30px clamp(16px,5vw,56px) 56px;}
+</style>
+<!-- librerie -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/mammoth/mammoth.browser.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useRef } = React;
+
+if (window.pdfjsLib) {
+  window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+}
+
+/* ---------------- estrattori ---------------- */
+const EML_LABELS = ["Ti chiami","Telefono","E-mail","Da dove vieni","Quanti anni hai","Con quale genere partecipi?","Hai letto e compreso i termini della call?","Presentazione personale","Sinossi","Caricamento file"];
+
+function parseEmlFields(text){
+  let body = text.replace(/\r\n/g,"\n").replace(/^\uFEFF/,"");
+  if(/=[0-9A-Fa-f]{2}/.test(body) && /quoted-printable/i.test(body)){
+    body = body.replace(/=\n/g,"").replace(/=([0-9A-Fa-f]{2})/g,(m,h)=>String.fromCharCode(parseInt(h,16)));
+  }
+  const pos = EML_LABELS.map(l=>({l,idx:body.indexOf(l+":")})).filter(p=>p.idx>=0).sort((a,b)=>a.idx-b.idx);
+  const out = {};
+  for(let i=0;i<pos.length;i++){
+    const cur=pos[i], start=cur.idx+cur.l.length+1;
+    let end = i+1<pos.length ? pos[i+1].idx : body.indexOf("Sent via form submission",start);
+    if(end<0) end=body.length;
+    let v=body.slice(start,end).trim();
+    if(cur.l==="Caricamento file") v=v.split("\n")[0].trim();
+    out[cur.l]=v;
+  }
+  return out;
+}
+function emlToText(text){
+  const f = parseEmlFields(text);
+  if(Object.keys(f).length===0) return text.trim();
+  return EML_LABELS.filter(l=>f[l]).map(l=>l+": "+f[l]).join("\n");
+}
+function rtfToText(rtf){
+  let t=rtf;
+  t=t.replace(/\\par[d]?\b/g,"\n").replace(/\\line\b/g,"\n").replace(/\\tab\b/g,"\t");
+  t=t.replace(/\\'([0-9a-fA-F]{2})/g,(m,h)=>String.fromCharCode(parseInt(h,16)));
+  t=t.replace(/\\u(-?\d+)\s?\??/g,(m,n)=>String.fromCharCode(((+n)+65536)%65536));
+  t=t.replace(/\\[a-zA-Z]+-?\d* ?/g,"").replace(/[{}]/g,"");
+  return t.replace(/\n{3,}/g,"\n\n").trim();
+}
+async function odtToText(file){
+  if(!window.JSZip) throw new Error("JSZip non caricato");
+  const zip=await window.JSZip.loadAsync(await file.arrayBuffer());
+  const f=zip.file("content.xml"); if(!f) throw new Error("content.xml assente");
+  let xml=await f.async("string");
+  xml=xml.replace(/<text:p[^>]*>/g,"\n").replace(/<text:tab[^>]*\/?>/g,"\t");
+  let t=xml.replace(/<[^>]+>/g,"");
+  t=t.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">").replace(/&apos;/g,"'").replace(/&quot;/g,'"');
+  return t.replace(/\n{3,}/g,"\n\n").trim();
+}
+function docBestEffort(buf){
+  const u=new Uint8Array(buf); let s="";
+  for(let i=0;i<u.length;i++){const c=u[i]; s+=((c>=32&&c<127)||c===10||c===13||c===9)?String.fromCharCode(c):" ";}
+  return (s.match(/[\x20-\x7E]{5,}/g)||[]).join(" ").replace(/\s{2,}/g," ").trim();
+}
+async function pdfToText(file){
+  if(!window.pdfjsLib) throw new Error("Lettore PDF non disponibile");
+  const data=new Uint8Array(await file.arrayBuffer());
+  const doc=await window.pdfjsLib.getDocument({data}).promise;
+  let out="";
+  for(let p=1;p<=doc.numPages;p++){
+    const page=await doc.getPage(p);
+    const tc=await page.getTextContent();
+    out+=tc.items.map(i=>i.str).join(" ")+"\n";
+    if(out.length>500000) break;
+  }
+  return out.trim();
+}
+async function extractAny(file){
+  const n=file.name.toLowerCase();
+  if(n.endsWith(".eml")) return emlToText(await file.text());
+  if(n.endsWith(".pdf")) return await pdfToText(file);
+  if(n.endsWith(".docx")) return (await window.mammoth.extractRawText({arrayBuffer:await file.arrayBuffer()})).value;
+  if(n.endsWith(".odt")) return await odtToText(file);
+  if(n.endsWith(".rtf")) return rtfToText(await file.text());
+  if(n.endsWith(".doc")) return docBestEffort(await file.arrayBuffer());
+  if(n.endsWith(".txt")||n.endsWith(".md")) return await file.text();
+  throw new Error("Formato non supportato: "+file.name);
+}
+
+/* ---------------- output: tipografia + markdown inline ---------------- */
+function normalizeTypography(s){
+  if(!s) return s;
+  return s.replace(/\u2014/g,"\u2013").replace(/[\u2018\u2019]/g,"'").replace(/[\u201C\u201D]/g,'"');
+}
+function escapeHtml(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");}
+function emphasize(s){return s.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>").replace(/\*([^*\n]+)\*/g,"<em>$1</em>");}
+function renderInline(text){
+  const re=/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<]+)/g;
+  let out="",last=0,m;
+  while((m=re.exec(text))){
+    out+=emphasize(escapeHtml(text.slice(last,m.index)));
+    if(m[1]) out+='<a href="'+escapeHtml(m[2])+'" target="_blank" rel="noopener">'+emphasize(escapeHtml(m[1]))+"</a>";
+    else out+='<a href="'+escapeHtml(m[3])+'" target="_blank" rel="noopener" style="word-break:break-all">'+escapeHtml(m[3])+"</a>";
+    last=re.lastIndex;
+  }
+  out+=emphasize(escapeHtml(text.slice(last)));
+  return out;
+}
+
+/* ---------------- esiti -> colore timbro ---------------- */
+function esitoStyle(raw){
+  const e=(raw||"").toLowerCase();
+  if(/non[_ ]?ammissibile/.test(e)) return {c:"#8E2A2A"};
+  if(/fuori[_ ]?call/.test(e)) return {c:"#C2603A"};
+  if(/interlocut/.test(e)) return {c:"#14534B"};
+  if(/(positiv|rappresent|typo[_ ]?3|pronto)/.test(e)) return {c:"#1F7A4D"};
+  if(/(typo[_ ]?2|quasi)/.test(e)) return {c:"#C9962B"};
+  if(/(negativ|rifiut|typo[_ ]?1)/.test(e)) return {c:"#2A2E36"};
+  return {c:"#2A2E36"};
+}
+
+const FALLBACK_SCHEMAS = [
+  {key:"Gratuito",label:"Gratuito — rifiuto breve",hint:"Carica il manoscritto."},
+  {key:"Gratuito_Plus",label:"Gratuito Plus — valutazione media",hint:"Carica il manoscritto."},
+  {key:"ITALIC",label:"ITALIC — presentazione + estratto",hint:"Carica presentazione/estratto (+ .eml)."},
+  {key:"Regular",label:"Regular — manoscritto completo",hint:"Carica il manoscritto completo."},
+  {key:"Regular_espansa",label:"Regular espansa — sezionata",hint:"Manoscritto completo, formato esteso."},
+  {key:"TYPO",label:"TYPO — revisione",hint:"Nuova versione + note precedenti nelle comunicazioni."},
+  {key:"Decisione_post_editing",label:"Decisione post-editing",hint:"Testo + corrispondenza di editing."},
+  {key:"GratuitoPlus_saggistica",label:"Gratuito Plus — saggistica",hint:"Non-fiction."},
+  {key:"Regular_espansa_saggistica",label:"Regular espansa — saggistica",hint:"Non-fiction, completo."},
+  {key:"Call_LettureDaSpiaggia",label:"Call — Letture da spiaggia",hint:".eml submission + estratto."},
+];
+
+const MAX_MANUSCRIPT = 400000, MAX_COMMS = 120000;
+
+function App(){
+  const [token,setToken]=useState(localStorage.getItem("liae_token")||"");
+  const [schemas,setSchemas]=useState(FALLBACK_SCHEMAS);
+  const [schemaKey,setSchemaKey]=useState("Regular");
+  const [ms,setMs]=useState(null);     // {name,text}
+  const [eml,setEml]=useState(null);   // {name,text}
+  const [comms,setComms]=useState([]); // [{name,text}]
+  const [busy,setBusy]=useState(false);
+  const [phase,setPhase]=useState("");
+  const [err,setErr]=useState("");
+  const [result,setResult]=useState(null);
+  const [copied,setCopied]=useState("");
+  const msRef=useRef(), emlRef=useRef(), commRef=useRef();
+
+  useEffect(()=>{
+    fetch("/api/manifest").then(r=>r.json()).then(d=>{
+      if(d && Array.isArray(d.schemas) && d.schemas.length){ setSchemas(d.schemas); setSchemaKey(d.schemas[0].key); }
+    }).catch(()=>{});
+  },[]);
+
+  const cur = schemas.find(s=>s.key===schemaKey) || {};
+
+  const onMs=async e=>{const f=e.target.files[0]; if(!f) return; setErr(""); setResult(null);
+    try{ setMs({name:f.name,text:await extractAny(f)}); }catch(ex){ setErr(ex.message); setMs(null); }};
+  const onEml=async e=>{const f=e.target.files[0]; if(!f) return; setErr(""); setResult(null);
+    try{ setEml({name:f.name,text:emlToText(await f.text())}); }catch(ex){ setErr("Lettura .eml non riuscita."); }};
+  const onComms=async e=>{const files=Array.from(e.target.files||[]); if(!files.length) return; setErr("");
+    const acc=[]; for(const f of files){ try{ acc.push({name:f.name,text:await extractAny(f)}); }catch(ex){ acc.push({name:f.name,text:"[estrazione non riuscita]"}); } }
+    setComms(c=>[...c,...acc]);};
+
+  const reset=()=>{ setMs(null);setEml(null);setComms([]);setResult(null);setErr("");setPhase("");
+    [msRef,emlRef,commRef].forEach(r=>{if(r.current)r.current.value="";}); };
+
+  const assembleMaterials=()=>{
+    const parts=[];
+    parts.push("SCHEMA RICHIESTO: "+schemaKey);
+    if(eml) parts.push("DATI SUBMISSION (.eml "+eml.name+"):\n"+eml.text);
+    if(ms){
+      let t=ms.text||""; let trunc="";
+      if(t.length>MAX_MANUSCRIPT){t=t.slice(0,MAX_MANUSCRIPT);trunc="\n[...testo troncato per lunghezza...]";}
+      parts.push("TESTO / ESTRATTO ("+ms.name+", "+(ms.text||"").length.toLocaleString("it-IT")+" battute):\n"+t+trunc);
+    }
+    if(comms.length){
+      let block=comms.map(c=>"--- "+c.name+" ---\n"+c.text).join("\n\n");
+      if(block.length>MAX_COMMS) block=block.slice(0,MAX_COMMS)+"\n[...comunicazioni troncate...]";
+      parts.push("COMUNICAZIONI PRECEDENTI:\n"+block);
+    }
+    return parts.join("\n\n");
+  };
+
+  const parseModel=raw=>{
+    const grab=(a,b)=>{const i=raw.indexOf(a); if(i<0) return ""; const s=i+a.length; const j=b?raw.indexOf(b,s):-1; return raw.slice(s,j<0?undefined:j).trim();};
+    const esito=grab("###ESITO###","###LETTERA###");
+    const lettera=normalizeTypography(grab("###LETTERA###","###NOTE_INTERNE###"));
+    const note=normalizeTypography(grab("###NOTE_INTERNE###",""));
+    return {esito:esito||"esito", lettera:lettera||normalizeTypography(raw), note};
+  };
+
+  const generate=async()=>{
+    if(!ms && !eml && !comms.length){ setErr("Carica almeno un materiale (manoscritto/estratto, .eml o comunicazioni)."); return; }
+    setBusy(true); setErr(""); setResult(null); setPhase("Preparazione materiali");
+    try{
+      const materials=assembleMaterials();
+      setPhase("Valutazione secondo lo schema");
+      const r=await fetch("/api/evaluate",{
+        method:"POST",
+        headers:{"content-type":"application/json","x-app-token":token},
+        body:JSON.stringify({schemaKey,materials})
+      });
+      const data=await r.json();
+      if(!r.ok) throw new Error(data.error||("Errore "+r.status));
+      setResult(parseModel(data.text||""));
+    }catch(ex){ setErr(ex.message||"Errore durante la generazione."); }
+    finally{ setBusy(false); setPhase(""); }
+  };
+
+  const copy=async(text,which)=>{ try{await navigator.clipboard.writeText(text); setCopied(which); setTimeout(()=>setCopied(""),1600);}catch{} };
+  const saveToken=v=>{ setToken(v); localStorage.setItem("liae_token",v); };
+
+  const stamp = result ? esitoStyle(result.esito) : null;
+
+  return (
+    <div>
+      <header style={{borderBottom:"1.5px solid var(--ink)",paddingBottom:16,marginBottom:24}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10}}>
+          <span style={{fontFamily:"JetBrains Mono,monospace",fontSize:12,letterSpacing:".18em",textTransform:"uppercase"}}>LIAE · ITALIC</span>
+          <input value={token} onChange={e=>saveToken(e.target.value)} placeholder="token d'accesso"
+            style={{fontFamily:"JetBrains Mono,monospace",fontSize:12,padding:"5px 9px",border:"1px solid var(--line)",borderRadius:3,background:"#fff",width:170}}/>
+        </div>
+        <h1 style={{fontFamily:"Fraunces,Georgia,serif",fontWeight:900,fontSize:"clamp(32px,6vw,48px)",lineHeight:1,margin:"14px 0 6px"}}>Valutatore</h1>
+        <p style={{color:"var(--muted)",fontSize:14.5,margin:0,maxWidth:580,lineHeight:1.5}}>Scegli lo schema, carica i materiali, genera lettera e note interne in Markdown secondo le direttive dello schema.</p>
+      </header>
+
+      <label style={lab}>Schema di valutazione</label>
+      <select value={schemaKey} onChange={e=>{setSchemaKey(e.target.value); setResult(null);}} style={sel}>
+        {schemas.map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+      </select>
+      {cur.hint && <p style={{color:"var(--muted)",fontSize:13,margin:"8px 2px 22px"}}>{cur.hint}</p>}
+
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(230px,1fr))",gap:12,marginBottom:16}}>
+        <Slot inputRef={msRef} accept=".pdf,.docx,.doc,.odt,.rtf,.txt,.md" onChange={onMs}
+          eyebrow="Testo / estratto" filled={!!ms} filename={ms&&ms.name+" · "+(ms.text||"").length.toLocaleString("it-IT")+" battute"} hint="PDF, DOCX, ODT, RTF, DOC, TXT"/>
+        <Slot inputRef={emlRef} accept=".eml,message/rfc822" onChange={onEml}
+          eyebrow="Submission .eml" filled={!!eml} filename={eml&&eml.name} hint="opzionale"/>
+        <Slot inputRef={commRef} accept=".eml,.pdf,.docx,.doc,.odt,.rtf,.txt,.md" multiple onChange={onComms}
+          eyebrow="Comunicazioni precedenti" filled={comms.length>0} filename={comms.length?comms.length+" file":null} hint="opzionale, multipli"/>
+      </div>
+      {comms.length>0 && <div style={{fontSize:12.5,color:"var(--muted)",marginBottom:14}}>{comms.map(c=>c.name).join(" · ")}</div>}
+
+      {err && <div style={errBox}>{err}</div>}
+
+      <div style={{display:"flex",gap:12,alignItems:"center",flexWrap:"wrap",margin:"4px 0 8px"}}>
+        <button onClick={generate} disabled={busy} style={{...cta,...(busy?{opacity:.5,cursor:"not-allowed"}:{})}}>{busy?"Lavoro in corso…":"Genera valutazione"}</button>
+        {(ms||eml||comms.length||result)?<button onClick={reset} disabled={busy} style={ghost}>Azzera</button>:null}
+        {busy&&phase&&<span style={{fontFamily:"JetBrains Mono,monospace",fontSize:12,color:"var(--sea)"}}>{phase}…</span>}
+      </div>
+
+      {result && (
+        <div style={{marginTop:28}}>
+          <div style={{marginBottom:20}}>
+            <span style={{display:"inline-block",border:"2px solid "+stamp.c,color:stamp.c,borderRadius:3,padding:"7px 16px",
+              fontFamily:"Fraunces,Georgia,serif",fontWeight:900,fontSize:20,letterSpacing:".02em",textTransform:"uppercase",
+              transform:"rotate(-2deg)",animation:"stampIn .4s ease-out"}}>{result.esito}</span>
+          </div>
+          <Panel title="Lettera — da inviare" text={result.lettera} copied={copied==="l"} onCopy={()=>copy(result.lettera,"l")}/>
+          <Panel title="Note interne — NON INVIARE" mono text={result.note||"—"} copied={copied==="n"} onCopy={()=>copy(result.note,"n")}/>
+        </div>
+      )}
+
+      <footer style={{marginTop:32,paddingTop:16,borderTop:"1px solid var(--line)",fontSize:12,color:"var(--muted)",lineHeight:1.5}}>
+        Output già normalizzato (trattini medi, apostrofi e virgolette dritti). Rivedi sempre prima di inviare. Lo scoring resta interno alle note.
+      </footer>
+    </div>
+  );
+}
+
+function Slot({inputRef,accept,multiple,onChange,eyebrow,filled,filename,hint}){
+  return (
+    <label style={{position:"relative",display:"flex",flexDirection:"column",gap:5,padding:"16px",background:"#fff",
+      border:"1.5px solid "+(filled?"var(--sea)":"var(--line)"),borderRadius:3,cursor:"pointer"}}>
+      <input ref={inputRef} type="file" accept={accept} multiple={multiple} onChange={onChange}
+        style={{position:"absolute",inset:0,opacity:0,cursor:"pointer",width:"100%",height:"100%"}}/>
+      <span style={{fontFamily:"JetBrains Mono,monospace",fontSize:11,letterSpacing:".1em",color:"var(--muted)",textTransform:"uppercase"}}>{eyebrow}</span>
+      {filled
+        ? <span style={{fontFamily:"JetBrains Mono,monospace",fontSize:12,color:"var(--sea)",wordBreak:"break-all"}}>{filename}</span>
+        : <span style={{fontSize:12.5,color:"var(--muted)"}}>{hint}</span>}
+      <span style={{marginTop:4,fontSize:12.5,fontWeight:600,textDecoration:"underline",textUnderlineOffset:3}}>{filled?"Sostituisci":"Scegli file"}</span>
+    </label>
+  );
+}
+
+function Panel({title,text,mono,copied,onCopy}){
+  return (
+    <div style={{border:"1.5px solid var(--line)",borderRadius:3,marginBottom:18,background:"#fff",overflow:"hidden"}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 14px",borderBottom:"1px solid var(--line)",background:"#faf9f4"}}>
+        <span style={{fontFamily:"JetBrains Mono,monospace",fontSize:11.5,letterSpacing:".1em",textTransform:"uppercase"}}>{title}</span>
+        <button onClick={onCopy} style={{fontFamily:"Inter,sans-serif",fontSize:12.5,fontWeight:600,color:"var(--ink)",background:"none",border:"1px solid var(--ink)",padding:"5px 12px",borderRadius:3,cursor:"pointer"}}>{copied?"Copiato ✓":"Copia MD"}</button>
+      </div>
+      <div style={mono
+        ? {padding:"16px 18px",whiteSpace:"pre-wrap",fontFamily:"JetBrains Mono,monospace",fontSize:12.5,lineHeight:1.62,color:"#33363d",background:"#fbfaf6"}
+        : {padding:"18px 20px",whiteSpace:"pre-wrap",fontFamily:"Fraunces,Georgia,serif",fontSize:16,lineHeight:1.62,color:"var(--ink)"}}
+        dangerouslySetInnerHTML={{__html:renderInline(text||"")}}/>
+    </div>
+  );
+}
+
+const lab={display:"block",fontFamily:"JetBrains Mono,monospace",fontSize:11,letterSpacing:".1em",textTransform:"uppercase",color:"var(--muted)",marginBottom:7};
+const sel={width:"100%",fontFamily:"Inter,sans-serif",fontSize:15,padding:"11px 12px",border:"1.5px solid var(--line)",borderRadius:3,background:"#fff",color:"var(--ink)"};
+const cta={fontFamily:"Inter,sans-serif",fontSize:15,fontWeight:600,color:"var(--paper)",background:"var(--ink)",border:"none",padding:"13px 26px",borderRadius:3,cursor:"pointer"};
+const ghost={fontFamily:"Inter,sans-serif",fontSize:14,color:"var(--muted)",background:"none",border:"1px solid var(--line)",padding:"12px 18px",borderRadius:3,cursor:"pointer"};
+const errBox={border:"1.5px solid #8E2A2A",background:"#fbeeee",color:"#8E2A2A",padding:"12px 16px",borderRadius:3,fontSize:13.5,marginBottom:16,lineHeight:1.45};
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>

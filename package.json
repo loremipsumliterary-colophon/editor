@@ -1,0 +1,7 @@
+{
+  "name": "valutatore-liae",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Valutatore editoriale LIAE/ITALIC: applica gli schemi di valutazione e genera lettera + note interne.",
+  "engines": { "node": ">=18" }
+}
